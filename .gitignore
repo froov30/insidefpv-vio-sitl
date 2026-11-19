@@ -1,7 +1,30 @@
+# Vendored sources and their build outputs are fetched by scripts/ and are
+# far too large to commit. scripts/build_sitl.sh and scripts/build_plugin.sh
+# reproduce them from insideFPV_task/setup.
 third_party/
 **/build/
+
+# Python bytecode.
 __pycache__/
 *.pyc
+
+# Runtime working directories. SITL writes eeprom.bin and DataFlash logs
+# here, and run_sim.sh writes the pair's console logs here. None of it is
+# source; the evidence that is kept lives under results/.
 logs/sitl/
+logs/sim/
+
+# Editor and agent configuration, not part of the deliverable.
+.vscode/
+.cursor/
+.claude/
+
+# DataFlash logs are runtime output everywhere except in results/, where
+# they are the flight evidence a reviewer is meant to open.
 *.BIN
+!results/**/*.BIN
+
+# Recorded camera frames: hundreds of megabytes, and regenerated exactly by
+# scripts/record_dataset.py. The timestamps, intrinsics and flight streams
+# that describe them are committed next to them in the same dataset folder.
 results/**/dataset_*/images/

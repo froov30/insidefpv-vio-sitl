@@ -1,0 +1,13 @@
+insideFPV_task environment loaded
+  GZ_VERSION=harmonic
+  plugin path=/home/dhruv/insideFPV_task/third_party/ardupilot_gazebo/build
+  ardupilot=/home/dhruv/insideFPV_task/third_party/ardupilot
+Starting Gazebo --headless
+Gazebo is up (pid 87167)
+Starting ArduCopter SITL
+SITL is up (pid 87210)
+SIM_READY
+  gazebo log: /home/dhruv/insideFPV_task/logs/sim/gazebo.log
+  sitl log:   /home/dhruv/insideFPV_task/logs/sim/sitl_console.log
+  ground station: python3 scripts/takeoff_land.py
+A simulator process exited (status 143); stopping the pair

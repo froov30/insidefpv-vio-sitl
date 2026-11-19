@@ -1,0 +1,49 @@
+{
+  "dataset": "/home/dhruv/insideFPV_task/results/task3/dataset_20261120_012619",
+  "trajectory": "/home/dhruv/insideFPV_task/results/task3/vio_trajectory.csv",
+  "samples": 472,
+  "gps_samples": 236,
+  "gps_origin": {
+    "latitude_deg": -35.3632621,
+    "longitude_deg": 149.1652373
+  },
+  "gps_projection_check_median_m": 0.009,
+  "gps_projection_check_max_m": 0.52,
+  "vio_path_length_m": 47.137,
+  "heading_offset_deg": -1.8,
+  "umeyama_scale": 0.9664,
+  "metrics": {
+    "raw_ate_rmse_horizontal_m": 0.3854,
+    "raw_ate_rmse_3d_m": 1.4821,
+    "raw_error_max_horizontal_m": 1.0765,
+    "raw_error_final_horizontal_m": 0.462,
+    "raw_rmse_north_m": 0.1946,
+    "raw_rmse_east_m": 0.3327,
+    "raw_rmse_down_m": 1.4311,
+    "raw_drift_per_metre": 0.0098,
+    "heading_aligned_ate_rmse_horizontal_m": 0.3518,
+    "heading_aligned_ate_rmse_3d_m": 1.4737,
+    "heading_aligned_error_max_horizontal_m": 0.9271,
+    "heading_aligned_error_final_horizontal_m": 0.462,
+    "heading_aligned_rmse_north_m": 0.2227,
+    "heading_aligned_rmse_east_m": 0.2724,
+    "heading_aligned_rmse_down_m": 1.4311,
+    "heading_aligned_drift_per_metre": 0.0098,
+    "umeyama_ate_rmse_horizontal_m": 0.2749,
+    "umeyama_ate_rmse_3d_m": 1.4573,
+    "umeyama_error_max_horizontal_m": 0.5825,
+    "umeyama_error_final_horizontal_m": 0.5073,
+    "umeyama_rmse_north_m": 0.1462,
+    "umeyama_rmse_east_m": 0.2328,
+    "umeyama_rmse_down_m": 1.4311,
+    "umeyama_drift_per_metre": 0.0108
+  },
+  "outputs": {
+    "metrics": "/home/dhruv/insideFPV_task/results/task4/metrics.csv",
+    "plots": [
+      "/home/dhruv/insideFPV_task/results/task4/xy_overlay.png",
+      "/home/dhruv/insideFPV_task/results/task4/altitude.png",
+      "/home/dhruv/insideFPV_task/results/task4/error.png"
+    ]
+  }
+}

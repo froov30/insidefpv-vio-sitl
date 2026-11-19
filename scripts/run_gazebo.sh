@@ -27,4 +27,27 @@ fi
 # -r starts the simulation clock immediately. If you omit -r, Gazebo
 # opens paused and SITL sits in lockstep until you press play, so the
 # takeoff script will time out waiting for a position estimate.
-exec gz sim -v4 -r iris_runway.sdf
+#
+# The world is worlds/vio_runway.sdf, which is the stock iris_runway
+# world with a field of static calibration targets added so the camera
+# has trackable texture. Its <world> name is still iris_runway, so every
+# topic name in this project (world/iris_runway/model/.../camera/image)
+# is unchanged. See the comment inside the world file.
+#
+# --headless runs the server only and renders with the EGL backend. It is
+# what the automated tests and the dataset recorder use: no desktop
+# session, and camera sensors still produce frames because
+# --headless-rendering is passed with -s. Without that flag the image
+# topic exists but never publishes.
+#
+# stdbuf -oL -eL matters when this is redirected to a log file. C++
+# iostreams are block-buffered on a file, so Gazebo's messages sat in a
+# 4 KB buffer and a caller reading the log saw nothing: an earlier version
+# of run_sim.sh waited three minutes for "ArduPilot ready to fly" while
+# the plugin had printed it 0.4 s after launch. Line buffering makes the
+# log usable while Gazebo is running.
+if [[ "${1:-}" == "--headless" ]]; then
+  exec stdbuf -oL -eL gz sim -s -r --headless-rendering -v4 vio_runway.sdf
+fi
+
+exec stdbuf -oL -eL gz sim -v4 -r vio_runway.sdf
