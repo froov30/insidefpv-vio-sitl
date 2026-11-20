@@ -1,30 +1,30 @@
 metric,value,unit,note
-raw_ate_rmse_horizontal_m,0.3854,m,root mean square of the per-sample horizontal error
-raw_ate_rmse_3d_m,1.4821,m,root mean square of the 3-axis error
-raw_error_max_horizontal_m,1.0765,m,worst single sample
-raw_error_final_horizontal_m,0.4620,m,horizontal error at touchdown
-raw_rmse_north_m,0.1946,m,per-axis
-raw_rmse_east_m,0.3327,m,per-axis
-raw_rmse_down_m,1.4311,m,"per-axis, down positive"
-raw_drift_per_metre,0.0098,m,final horizontal error divided by VIO path length
-heading_aligned_ate_rmse_horizontal_m,0.3518,m,root mean square of the per-sample horizontal error
-heading_aligned_ate_rmse_3d_m,1.4737,m,root mean square of the 3-axis error
-heading_aligned_error_max_horizontal_m,0.9271,m,worst single sample
-heading_aligned_error_final_horizontal_m,0.4620,m,horizontal error at touchdown
-heading_aligned_rmse_north_m,0.2227,m,per-axis
-heading_aligned_rmse_east_m,0.2724,m,per-axis
-heading_aligned_rmse_down_m,1.4311,m,"per-axis, down positive"
-heading_aligned_drift_per_metre,0.0098,m,final horizontal error divided by VIO path length
-umeyama_ate_rmse_horizontal_m,0.2749,m,root mean square of the per-sample horizontal error
-umeyama_ate_rmse_3d_m,1.4573,m,root mean square of the 3-axis error
-umeyama_error_max_horizontal_m,0.5825,m,worst single sample
-umeyama_error_final_horizontal_m,0.5073,m,horizontal error at touchdown
-umeyama_rmse_north_m,0.1462,m,per-axis
-umeyama_rmse_east_m,0.2328,m,per-axis
-umeyama_rmse_down_m,1.4311,m,"per-axis, down positive"
-umeyama_drift_per_metre,0.0108,m,final horizontal error divided by VIO path length
-vio_path_length,47.137,m,sum of the VIO's per-frame steps
-heading_offset,-1.80,deg,rotation that best aligns the VIO to the GPS track
-umeyama_scale,0.9664,-,"fitted similarity scale, reported not applied anywhere else"
-gps_samples,236,-,fix_type 6
-vio_samples,472,-,one per camera frame
+raw_ate_rmse_horizontal_m,0.6544,m,root mean square of the per-sample horizontal error
+raw_ate_rmse_3d_m,0.9924,m,root mean square of the 3-axis error
+raw_error_max_horizontal_m,1.1111,m,worst single sample
+raw_error_final_horizontal_m,0.5516,m,horizontal error at touchdown
+raw_rmse_north_m,0.3428,m,per-axis
+raw_rmse_east_m,0.5574,m,per-axis
+raw_rmse_down_m,0.7461,m,"per-axis, down positive"
+raw_drift_per_metre,0.0101,m/m,final horizontal error divided by VIO path length
+heading_aligned_ate_rmse_horizontal_m,0.6045,m,root mean square of the per-sample horizontal error
+heading_aligned_ate_rmse_3d_m,0.9602,m,root mean square of the 3-axis error
+heading_aligned_error_max_horizontal_m,0.9695,m,worst single sample
+heading_aligned_error_final_horizontal_m,0.5485,m,horizontal error at touchdown
+heading_aligned_rmse_north_m,0.3711,m,per-axis
+heading_aligned_rmse_east_m,0.4771,m,per-axis
+heading_aligned_rmse_down_m,0.7461,m,"per-axis, down positive"
+heading_aligned_drift_per_metre,0.0100,m/m,final horizontal error divided by VIO path length
+umeyama_ate_rmse_horizontal_m,0.3263,m,root mean square of the per-sample horizontal error
+umeyama_ate_rmse_3d_m,0.8143,m,root mean square of the 3-axis error
+umeyama_error_max_horizontal_m,0.7172,m,worst single sample
+umeyama_error_final_horizontal_m,0.2291,m,horizontal error at touchdown
+umeyama_rmse_north_m,0.2183,m,per-axis
+umeyama_rmse_east_m,0.2425,m,per-axis
+umeyama_rmse_down_m,0.7461,m,"per-axis, down positive"
+umeyama_drift_per_metre,0.0042,m/m,final horizontal error divided by VIO path length
+vio_path_length,54.879,m,sum of the VIO's per-frame steps
+heading_offset,-2.90,deg,rotation that best aligns the VIO to the GPS track
+umeyama_scale,0.9955,-,"fitted similarity scale, reported not applied anywhere else"
+gps_samples,217,-,fix_type 6
+vio_samples,435,-,one per camera frame

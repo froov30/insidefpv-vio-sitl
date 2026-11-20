@@ -3,12 +3,19 @@
 
 Reads one results/task3/dataset_<stamp>/ directory plus the trajectory that
 scripts/vio.py wrote from it, and produces the numbers and plots that
-REPORT.md quotes:
+README.md quotes:
 
     results/task4/metrics.csv      every metric, its value, its unit
     results/task4/xy_overlay.png   both tracks, top-down
     results/task4/altitude.png     altitude against time
     results/task4/error.png        horizontal error against distance flown
+
+With --plot-vio this file draws the Task 3 figure instead: the recorded GPS
+track against the VIO track, written next to the trajectory with the same
+stem. That figure is a picture of what the estimator produced, so it stays
+with the estimator's output rather than in results/task4 - but it is drawn
+here because the reference track and the clock bridge are built here, and a
+second copy of them would be a second answer to "what is the reference?".
 
 Inputs
     gps_raw.csv          GPS_RAW_INT: latitude, longitude, altitude
@@ -49,6 +56,20 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def display_path(path):
+    """The path as written into the JSON summaries.
+
+    Relative to the repository whenever the file is inside it, so a summary
+    stays readable - and correct - when the project is cloned somewhere else.
+    """
+    path = Path(path).resolve()
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -132,8 +153,23 @@ def boot_to_wall(frames):
     the wall clock, so the two have to be bridged. frames.csv carries both
     for every image, which makes the mapping a measurement rather than an
     assumption.
+
+    A frame that arrives before the first timestamped MAVLink message has
+    no boot_time_s: record_dataset.py leaves that column empty rather than
+    inventing a value. Such a frame cannot be placed on the autopilot clock,
+    so it is dropped here and counted out loud - the same rule dataset.json
+    applies in clock_offset_stats(). Only the first frame or two of a
+    recording can be affected, because the clock is seeded as soon as the
+    logger thread receives its first ATTITUDE.
     """
-    return column(frames, "boot_time_s"), column(frames, "wall_time_s")
+    usable = [row for row in frames
+              if row["boot_time_s"] not in ("", None)
+              and row["wall_time_s"] not in ("", None)]
+    dropped = len(frames) - len(usable)
+    if dropped:
+        print(f"note: {dropped} frame(s) without an autopilot timestamp "
+              "dropped from the clock mapping", file=sys.stderr)
+    return column(usable, "boot_time_s"), column(usable, "wall_time_s")
 
 
 def reference_at(vio_rows, boot, wall, gps_wall, gps_north, gps_east, gps_up):
@@ -206,13 +242,12 @@ def umeyama(source, target):
     comparison must not grant the VIO silently - it is reported, not used.
 
     Written for any number of dimensions, because this script fits it in
-    the horizontal plane only. A full 3D fit here would trade horizontal
-    accuracy for vertical: the VIO's vertical drift is larger than its
-    horizontal error, so the optimiser would shrink everything to chase the
-    altitude error and make the horizontal match worse. The horizontal fit
-    answers the question the comparison is actually asking - is the XY
-    error a consistent scale or rotation that could be calibrated out, or
-    is it genuine drift?
+    the horizontal plane only. The headline metric is horizontal, and the
+    vertical axis is the VIO's weakest (0.746 m against 0.654 m horizontal on
+    the recorded flight), so a full 3D fit is free to buy its own residual
+    with horizontal accuracy. Fitting only the horizontal plane answers the
+    question the comparison is asking - is the XY error a consistent scale or
+    rotation that could be calibrated out, or is it genuine drift?
     """
     source_mean = source.mean(axis=0)
     target_mean = target.mean(axis=0)
@@ -281,11 +316,11 @@ def collect_metrics(alignment_name, north, east, down, ref_north, ref_east,
 def make_plots(output_dir, wall_time, ref_north, ref_east, ref_up,
                raw_north, raw_east, raw_down, aligned_north, aligned_east,
                raw_error, aligned_error, path_distance):
-    """Write the three figures REPORT.md refers to."""
+    """Write the three figures README.md refers to."""
     import matplotlib
-    # No display is available on the machine that runs the automated side of
-    # this task, so the backend is chosen up front rather than discovered
-    # when the first figure fails to appear.
+    # These figures are written by runs that have no display, so the backend
+    # is chosen up front rather than discovered when the first figure fails
+    # to appear.
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -350,14 +385,115 @@ def make_plots(output_dir, wall_time, ref_north, ref_east, ref_up,
 # ---------------------------------------------------------------------------
 
 def newest_dataset(task3_dir):
-    """Most recent dataset directory, matching vio.py's own rule."""
+    """Most recent complete dataset directory, matching vio.py's own rule.
+
+    dataset.json is written after the flight, so its presence is what tells a
+    finished recording from one that was interrupted. Without that test an
+    aborted run - which leaves only images/ behind - can sort newest and send
+    this comparison looking for telemetry that was never recorded.
+    """
     candidates = sorted(
-        (p for p in task3_dir.glob("dataset_*") if p.is_dir()),
+        (p for p in task3_dir.glob("dataset_*")
+         if p.is_dir() and (p / "dataset.json").is_file()),
         key=lambda p: p.name,
     )
     if not candidates:
-        raise SystemExit(f"No dataset_* directory in {task3_dir}.")
+        raise SystemExit(f"No complete dataset_* directory in {task3_dir}.")
     return candidates[-1]
+
+
+def plot_vio_figure(dataset_dir, trajectory_path, output_path):
+    """Draw the VIO trajectory against the recorded GPS track.
+
+    This is the Task 3 figure: the estimator writes numbers only, and this
+    draws them. Only the raw alignment is drawn - both tracks moved to their
+    first common sample, nothing rotated, no scale fitted - because a plot
+    that had been rotated to fit would look better than the number it
+    illustrates, and the first question about any VIO plot is "how much was
+    fitted?".
+
+    The reference track, the projection and the clock bridge are the ones
+    the metrics below use, so the picture and the numbers cannot disagree
+    about either.
+    """
+    if not trajectory_path.is_file():
+        raise SystemExit(f"No trajectory at {trajectory_path}. Run "
+                         "scripts/vio.py first.")
+
+    # Reference track, exactly as the metrics build it: raw fixes projected
+    # onto a tangent plane through the first one.
+    gps_rows = read_csv(dataset_dir / "gps_raw.csv")
+    gps_wall, gps_north, gps_east, gps_up, _origin = gps_to_local(gps_rows)
+
+    # VIO track, placed on the same clock through frames.csv. The VIO is
+    # timed on the autopilot clock and the GPS on the recording clock, so
+    # this bridge is a measurement, not an assumption.
+    vio_rows = read_csv(trajectory_path)
+    frames = read_csv(dataset_dir / "frames.csv")
+    boot, wall = boot_to_wall(frames)
+    wall_time, ref_north, ref_east, ref_up = reference_at(
+        vio_rows, boot, wall, gps_wall, gps_north, gps_east, gps_up)
+
+    vio_north = column(vio_rows, "north_m")
+    vio_east = column(vio_rows, "east_m")
+    vio_down = column(vio_rows, "down_m")
+
+    # Raw alignment: move both tracks to the first common instant and stop.
+    ref_north = ref_north - ref_north[0]
+    ref_east = ref_east - ref_east[0]
+    vio_north = vio_north - vio_north[0]
+    vio_east = vio_east - vio_east[0]
+    vio_down = vio_down - vio_down[0]
+
+    import matplotlib
+    # No window is ever opened from here: the wrapper decides whether to show
+    # the file, so there is no DISPLAY to discover and no window to fail on.
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    figure, (left, right) = plt.subplots(
+        1, 2, figsize=(12.0, 5.2),
+        gridspec_kw={"width_ratios": [1.0, 1.15]})
+
+    # 1. Top-down. Equal aspect because a square that measures square on the
+    # ground has to measure square on the page, or the plot quietly
+    # misrepresents the shape of the flight.
+    left.plot(ref_east, ref_north, color=COLOUR_REFERENCE,
+              linewidth=2.0, label="GPS reference")
+    left.plot(vio_east, vio_north, color=COLOUR_RAW,
+              linewidth=1.2, label="VIO (raw alignment)")
+    left.plot([vio_east[0]], [vio_north[0]], marker="o", color="black",
+              markersize=5, label="start")
+    left.set_xlabel("east (m)")
+    left.set_ylabel("north (m)")
+    left.set_title("Horizontal track: no fitted rotation")
+    left.set_aspect("equal", adjustable="datalim")
+    left.grid(alpha=0.3)
+    left.legend(loc="best", fontsize=8)
+
+    # 2. Height. The VIO's down axis is negated so that both curves rise on
+    # takeoff; without that the two lines would be mirror images and the
+    # reader would see a disagreement that is only a sign convention.
+    right.plot(wall_time, ref_up, color=COLOUR_REFERENCE,
+               linewidth=2.0, label="GPS altitude")
+    right.plot(wall_time, -vio_down, color=COLOUR_RAW,
+               linewidth=1.2, label="VIO height")
+    right.set_xlabel("time on the recording clock (s)")
+    right.set_ylabel("height above start (m)")
+    right.set_title("Altitude: the weak axis")
+    right.grid(alpha=0.3)
+    right.legend(loc="best", fontsize=8)
+
+    figure.suptitle(
+        f"VIO trajectory: {len(vio_rows)} frames, "
+        f"{float(column(vio_rows, 'step_m').sum()):.2f} m flown",
+        fontsize=10)
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=FIGURE_DPI)
+    plt.close(figure)
+    print(f"Plot: {output_path}")
+    return 0
 
 
 def parse_args():
@@ -372,6 +508,9 @@ def parse_args():
                              "vio_trajectory.csv")
     parser.add_argument("--output", default=None,
                         help="Output directory. Default: results/task4")
+    parser.add_argument("--plot-vio", action="store_true",
+                        help="Draw the Task 3 figure against the VIO "
+                             "trajectory instead of computing the metrics")
     return parser.parse_args()
 
 
@@ -381,6 +520,15 @@ def main():
                    else newest_dataset(ROOT / "results" / "task3"))
     trajectory_path = (Path(args.trajectory) if args.trajectory
                        else ROOT / "results" / "task3" / "vio_trajectory.csv")
+    if args.plot_vio:
+        # Same dataset, same trajectory, one figure. The PNG follows the CSV -
+        # same directory, same stem - so a redirected --output cannot leave a
+        # plot beside another run's numbers.
+        print(f"Dataset: {dataset_dir}")
+        print(f"Trajectory: {trajectory_path}")
+        return plot_vio_figure(dataset_dir, trajectory_path,
+                               trajectory_path.with_suffix(".png"))
+
     output_dir = (Path(args.output) if args.output
                   else ROOT / "results" / "task4")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -397,15 +545,18 @@ def main():
     print(f"GPS origin: {origin['latitude_deg']:.7f}, "
           f"{origin['longitude_deg']:.7f}, {len(gps_rows)} fixes")
 
+    # The recording's two clocks, bridged once. boot_to_wall() also drops the
+    # frames that arrived before the first autopilot timestamp: their
+    # boot_time_s is empty on purpose, and column() cannot convert that.
+    frames = read_csv(dataset_dir / "frames.csv")
+    boot, wall = boot_to_wall(frames)
+
     # Independent check on the projection: the autopilot's own local NED
     # estimate covers the same ground, so a projection bug would show up
     # here as a difference that grows with distance from the origin.
     local_rows = read_csv(dataset_dir / "local_position.csv")
-    local_wall = (np.interp(column(local_rows, "time_boot_ms") / 1000.0,
-                            column(read_csv(dataset_dir / "frames.csv"),
-                                   "boot_time_s"),
-                            column(read_csv(dataset_dir / "frames.csv"),
-                                   "wall_time_s")))
+    local_wall = np.interp(column(local_rows, "time_boot_ms") / 1000.0,
+                           boot, wall)
     check_north = np.interp(local_wall, gps_wall, gps_north)
     check_east = np.interp(local_wall, gps_wall, gps_east)
     check_error = np.sqrt((check_north - column(local_rows, "north_m")) ** 2
@@ -418,8 +569,6 @@ def main():
     vio_rows = read_csv(trajectory_path)
     if len(vio_rows) < MIN_SAMPLES:
         raise SystemExit(f"Only {len(vio_rows)} VIO samples.")
-    frames = read_csv(dataset_dir / "frames.csv")
-    boot, wall = boot_to_wall(frames)
     wall_time, ref_north, ref_east, ref_up = reference_at(
         vio_rows, boot, wall, gps_wall, gps_north, gps_east, gps_up)
 
@@ -453,8 +602,8 @@ def main():
         ref_north, ref_east, ref_up, path_length)
 
     # --- Umeyama similarity fit (labelled, not a headline) ---------------
-    # Horizontal plane only; see the note in umeyama() for why a 3D fit
-    # would report a better-looking vertical at the cost of the XY match.
+    # Horizontal plane only; see the note in umeyama() for why a 3D fit could
+    # trade the XY match for a better-looking vertical.
     target = np.column_stack([ref_north, ref_east])
     source = np.column_stack([vio_north, vio_east])
     scale, rotation, translation = umeyama(source, target)
@@ -469,7 +618,10 @@ def main():
         writer = csv.writer(handle)
         writer.writerow(["metric", "value", "unit", "note"])
         for name, value, note in raw_rows + aligned_rows + fitted_rows:
-            writer.writerow([name, f"{value:.4f}", "m", note])
+            # Every metric in these lists is a length except the drift figures,
+            # which are a length divided by a length.
+            unit = "m/m" if name.endswith("_per_metre") else "m"
+            writer.writerow([name, f"{value:.4f}", unit, note])
         writer.writerow(["vio_path_length", f"{path_length:.3f}", "m",
                          "sum of the VIO's per-frame steps"])
         writer.writerow(["heading_offset", f"{offset_deg:.2f}", "deg",
@@ -488,8 +640,8 @@ def main():
 
     # --- summary on stdout ------------------------------------------------
     summary = {
-        "dataset": str(dataset_dir),
-        "trajectory": str(trajectory_path),
+        "dataset": display_path(dataset_dir),
+        "trajectory": display_path(trajectory_path),
         "samples": int(len(vio_rows)),
         "gps_samples": len(gps_rows),
         "gps_origin": origin,
@@ -503,8 +655,8 @@ def main():
             raw_rows + aligned_rows + fitted_rows
         },
         "outputs": {
-            "metrics": str(metrics_path),
-            "plots": [str(output_dir / name) for name in
+            "metrics": display_path(metrics_path),
+            "plots": [display_path(output_dir / name) for name in
                       ("xy_overlay.png", "altitude.png", "error.png")],
         },
     }

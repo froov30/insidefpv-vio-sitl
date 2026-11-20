@@ -1,0 +1,125 @@
+{
+  "kind": "task3_camera_imu_gps",
+  "started_utc": "2026-11-20T15:51:17Z",
+  "finished_utc": "2026-11-20T15:52:45Z",
+  "flight_completed": true,
+  "phases": [
+    "guided",
+    "armed",
+    "takeoff",
+    "altitude",
+    "leg_north",
+    "leg_east",
+    "leg_south",
+    "leg_west",
+    "land"
+  ],
+  "camera": {
+    "image_topic": "/world/iris_runway/model/iris_with_gimbal/model/gimbal/link/pitch_link/sensor/camera/image",
+    "info_topic": "/world/iris_runway/model/iris_with_gimbal/model/gimbal/link/pitch_link/sensor/camera/camera_info",
+    "transport": "gz-transport13 Python bindings (no ROS)",
+    "intrinsics": {
+      "width": 640,
+      "height": 480,
+      "fx": 205.4696273803711,
+      "fy": 205.4696559906006,
+      "cx": 320.0,
+      "cy": 240.0,
+      "skew": 0.0,
+      "intrinsics_matrix": [
+        205.4696273803711,
+        0.0,
+        320.0,
+        0.0,
+        205.4696559906006,
+        240.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "projection_matrix": [
+        205.4696273803711,
+        0.0,
+        320.0,
+        0.0,
+        0.0,
+        205.4696559906006,
+        240.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0
+      ],
+      "distortion_model": 0,
+      "distortion": {
+        "k1": 0.0,
+        "k2": 0.0,
+        "p1": 0.0,
+        "p2": 0.0,
+        "k3": 0.0
+      }
+    },
+    "gimbal_pitch_rad": 0.7,
+    "format": "RGB_INT8 PNG, colour channel flipped to BGR for cv2"
+  },
+  "frames": {
+    "count": 435,
+    "dropped": 0,
+    "mean_interval_s": 0.1
+  },
+  "streams": {
+    "requested_hz": {
+      "RAW_IMU": 50.0,
+      "SCALED_IMU2": 50.0,
+      "ATTITUDE": 20.0,
+      "GLOBAL_POSITION_INT": 10.0,
+      "LOCAL_POSITION_NED": 10.0,
+      "GPS_RAW_INT": 5.0,
+      "EKF_STATUS_REPORT": 2.0
+    },
+    "achieved_hz": {
+      "ATTITUDE": 20.07,
+      "COMMAND_ACK": 0.16,
+      "EKF_STATUS_REPORT": 2.0,
+      "GLOBAL_POSITION_INT": 10.02,
+      "GPS_GLOBAL_ORIGIN": 0.05,
+      "GPS_RAW_INT": 5.0,
+      "HEARTBEAT": 1.06,
+      "HOME_POSITION": 0.05,
+      "LOCAL_POSITION_NED": 10.02,
+      "PARAM_VALUE": 0.18,
+      "RAW_IMU": 50.23,
+      "SCALED_IMU2": 50.18,
+      "STATUSTEXT": 0.16,
+      "SYS_STATUS": 0.02,
+      "TIMESYNC": 0.09
+    },
+    "sim_duration_s": 43.4,
+    "real_time_factor": 0.498,
+    "logger_link": "tcp:127.0.0.1:5762",
+    "command_link": "tcp:127.0.0.1:5760",
+    "units": {
+      "imu_acceleration": "m/s^2",
+      "imu_gyro": "rad/s",
+      "attitude": "rad",
+      "local_position": "m, m/s",
+      "time": "seconds on each message's own clock"
+    }
+  },
+  "clock": {
+    "note": "boot_time_s is ArduCopter time_boot_ms; sim_time_s is the Gazebo image stamp. The offset is measured, not assumed.",
+    "boot_minus_sim": {
+      "samples": 435,
+      "median_s": -6.442,
+      "min_s": -6.492,
+      "max_s": -6.392,
+      "spread_s": 0.1
+    }
+  },
+  "flight": {
+    "target_altitude_m": 5.0,
+    "leg_length_m": 8.0,
+    "corner_hover_s": 2.0
+  }
+}

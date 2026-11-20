@@ -1,0 +1,55 @@
+insideFPV_task environment loaded
+  GZ_VERSION=harmonic
+  plugin path=/home/dhruv/insideFPV_task/third_party/ardupilot_gazebo/build
+  ardupilot=/home/dhruv/insideFPV_task/third_party/ardupilot
+Waiting for Gazebo's plugin socket on UDP 9002 ...
+Setting SIM_SPEEDUP=1.000000
+Starting SITL: JSON
+JSON control interface set to 127.0.0.1:9002
+Starting sketch 'ArduCopter'
+Starting SITL input
+Using Irlock at port : 9005
+Using \clock topic for DDS timing: disabled
+bind port 5760 for SERIAL0
+SERIAL0 on TCP port 5760
+Waiting for connection ....
+
+SITL_READY  (SERIAL0 tcp:5760, logging endpoints 5762 and 5763)
+  GPS and EKF health are reported to the flight script, not here.
+  SERIAL0 serves one client at a time, so a readiness probe here would
+  hold the slot the ground station is about to need - the wait lives
+  in the script that will do the flying.
+  next, in a third terminal: ./scripts/run_task2.sh
+  or for the dataset run:     ./scripts/run_task3_record.sh
+Connection on serial port 5760
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+bind port 5762 for SERIAL1
+SERIAL1 on TCP port 5762
+bind port 5763 for SERIAL2
+SERIAL2 on TCP port 5763
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+Home: -35.363262 149.165237 alt=584.000000m hdg=353.000000
+No JSON sensor message received, resending servos
+
+JSON received:
+	timestamp
+	imu: gyro
+	imu: accel_body
+	position
+	quaternion
+	velocity
+	no_time_sync
+	no_lockstep
+
+Forcing use_time_sync=0
+No JSON sensor message received, resending servos
+No JSON sensor message received, resending servos
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+validate_structures:546: Validating structures
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+Loaded defaults from /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm
+Closed connection on SERIAL0
+Exitting

@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
-"""MAVLink plumbing shared by the ground-station scripts.
+"""MAVLink plumbing for the project - and the guided flight that uses it.
 
 This module is the only place in the project that opens a MAVLink link and
-the only place that knows MAVLink units. Every caller - takeoff_land.py,
-record_dataset.py and test_task2.py - gets the same connection, the same
-readiness test, and the same mode-change/ack handling.
+the only place that knows MAVLink units. Every caller - record_dataset.py
+and test_task2.py - gets the same connection, the same readiness test, and
+the same mode-change/ack handling.
+
+The last section is the ground station: run this file directly to arm, climb
+to a target altitude, hold and land, writing one CSV row per position
+update (see "Ground station" at the bottom). The flight lives beside the
+primitives it composes on purpose - the climb loop, the disarm wait and the
+"what counts as having taken off" rule exist once, so Task 2 and Task 3
+cannot drift apart on any of them.
 
 MAVLink is the protocol ArduCopter speaks. pymavlink is a pure-Python
 implementation, so no ROS and no MAVProxy are involved anywhere.
 
 One connection rule matters more than any other here. SITL's SERIAL0 is
 TCP 127.0.0.1:5760 with the "wait for client" option
-(libraries/AP_HAL_SITL/SITL_State.h). It accepts exactly one client and
-never accepts another. If this module connects to a SITL left over from an
-earlier run, the TCP connection succeeds (the kernel completes the
-handshake from the listen backlog) but no heartbeat ever arrives, because
-the flight controller's socket belongs to a client that is already gone.
-scripts/run_sim.sh kills such leftovers before every run; the error text
-in connect() names that script for exactly this reason.
+(libraries/AP_HAL_SITL/SITL_State.h). It serves one client at a time, and
+it does accept a later one after a disconnect: UARTDriver::
+_check_connection() prints "New connection on SERIAL0". The trap is a
+SITL left over from an earlier run - it owns 5760 and answers the next
+client with state from that attempt, or with no heartbeat at all if the
+Gazebo it was paired with is gone. scripts/run_sim.sh and
+scripts/stop_sim.sh end such leftovers; the error text in connect()
+names them for exactly this reason.
 """
 
+import argparse
+import csv
+import json
+import sys
 import time
+from pathlib import Path
 
 from pymavlink import mavutil
 
@@ -80,7 +93,20 @@ TRANSIENT_PREARM_PATTERNS = (
 )
 
 
-def connect(connection=CONNECTION, timeout_s=30):
+# How long to wait for the first heartbeat.
+#
+# 90 s, not 30. A cold windowed start can take more than a minute between the
+# wrapper printing SITL_READY and the flight controller answering: SITL binds
+# SERIAL0 early, but the vehicle only enters its MAVLink loop once the
+# plugin's first sensor packet has arrived, and a windowed Gazebo reaches that
+# point long after it has bound UDP 9002. A 30 s default reports such a start
+# as a failure. A genuinely dead link is caught in a millisecond by
+# require_pair_for_flight() in the wrappers, so this timeout only has to cover
+# "up, still booting".
+CONNECT_TIMEOUT_S = 90
+
+
+def connect(connection=CONNECTION, timeout_s=CONNECT_TIMEOUT_S):
     """Open the link and wait for the first heartbeat.
 
     wait_heartbeat() both reads the heartbeat and fills in target_system
@@ -93,10 +119,12 @@ def connect(connection=CONNECTION, timeout_s=30):
     heartbeat = master.wait_heartbeat(timeout=timeout_s)
     if heartbeat is None:
         raise TimeoutError(
-            f"No heartbeat within {timeout_s:.0f} s. Either SITL is not "
-            "running, or a SITL from an earlier attempt still owns TCP "
-            "5760 and can no longer answer. Start a fresh pair with "
-            "`bash scripts/run_sim.sh` (it kills stale processes first)."
+            f"No heartbeat within {timeout_s:.0f} s. Either nothing is "
+            "listening on that address, or SITL is up but not answering "
+            "yet: it binds SERIAL0 before it starts its MAVLink loop, so a "
+            "cold start can be slow. Watch the SITL terminal for 'GPS 1: "
+            "detected'. If it is idle, ./scripts/stop_sim.sh ends a stale "
+            "leftover and then start the pair again."
         )
     print(
         f"Heartbeat from system {master.target_system} "
@@ -168,9 +196,10 @@ def wait_until_ready(master, timeout_s, log_pre_arm=True):
             return
     raise TimeoutError(
         "GPS/EKF did not become ready. Gazebo is probably not running, "
-        "or it was left paused, or SITL is not using --model JSON. "
-        "Check logs/sim/gazebo.log for 'ArduPilot ready to fly' and "
-        "logs/sim/sitl_console.log for EKF lines."
+        "paused, or driving SITL without --model JSON. Check the Gazebo "
+        "terminal for plugin errors and that UDP 9002 is bound "
+        "(`ss -ulnp | grep 9002`), then the EKF lines in "
+        "logs/sim/sitl_console.log."
     )
 
 
@@ -476,6 +505,20 @@ POSITION_ONLY_MASK = 0b0000111111111000
 # packet is lost and makes the target visible in the logs.
 SETPOINT_RATE_HZ = 5.0
 
+# How long to wait for the first LOCAL_POSITION_NED before treating the
+# arrival test as unusable. A stream that was never requested looks exactly
+# like "not there yet", so the difference has to be detected and named
+# rather than waited out: 10 s holds ~100 samples at 10 Hz, while the caller's
+# per-leg timeout would make the same mistake cost a minute per corner and
+# present as an aircraft that simply hovers.
+LOCAL_POSITION_WAIT_S = 10.0
+
+# How often, in wall-clock seconds, to print the distance still to go while a
+# leg is converging. Without a progress line a leg that is not converging
+# looks like a frozen terminal, which is how the missing LOCAL_POSITION_NED
+# stream first presented itself.
+PROGRESS_INTERVAL_S = 2.0
+
 
 def goto_local_ned(master, north_m, east_m, down_m, timeout_s=30,
                    acceptance_m=0.5, position_callback=None, dwell_s=0.0):
@@ -495,6 +538,12 @@ def goto_local_ned(master, north_m, east_m, down_m, timeout_s=30,
     received while flying. record_dataset.py uses it to log the GPS track
     without opening a second reader on the same socket.
 
+    LOCAL_POSITION_NED has to be streaming on this link, so the caller must
+    request it; record_dataset.py includes it in COMMAND_RATES. SERIAL0 does
+    not send it unless asked, and its absence is reported as a named error
+    after LOCAL_POSITION_WAIT_S instead of being waited out as "not there
+    yet" - with a per-leg timeout that mistake looks like a hovering aircraft.
+
     Why two message types: the setpoint is compared with the flight
     controller's own local estimate (LOCAL_POSITION_NED), which is already
     in metres and shares the EKF origin, so no lat/lon conversion is
@@ -502,14 +551,26 @@ def goto_local_ned(master, north_m, east_m, down_m, timeout_s=30,
     and what the metric report is computed from.
     """
     interval_s = 1.0 / SETPOINT_RATE_HZ
-    deadline = time.time() + timeout_s
+    started = time.time()
+    deadline = started + timeout_s
     reached_at = None
     last_send = 0.0
     last_gps = None
+    last_progress = 0.0
+    distance_m = None
     print(f"GUIDED setpoint: N {north_m:+.1f} m, E {east_m:+.1f} m, "
           f"D {down_m:+.1f} m")
     while time.time() < deadline:
         now = time.time()
+        if distance_m is None and now - started >= LOCAL_POSITION_WAIT_S:
+            raise TimeoutError(
+                "No LOCAL_POSITION_NED on this link, so arrival at "
+                f"N {north_m:.1f} E {east_m:.1f} cannot be measured. It has "
+                "to be requested with set_message_interval(): SERIAL0 does "
+                "not stream it by default (SR0_POSITION is 0). The setpoint "
+                "was still being sent, so the aircraft is holding wherever "
+                "this leg started."
+            )
         if now - last_send >= interval_s:
             master.mav.set_position_target_local_ned_send(
                 0,  # time_boot_ms; 0 means "now" for this message
@@ -537,13 +598,316 @@ def goto_local_ned(master, north_m, east_m, down_m, timeout_s=30,
         else:
             dn = msg.x - north_m
             de = msg.y - east_m
-            if dn * dn + de * de <= acceptance_m * acceptance_m:
+            distance_m = (dn * dn + de * de) ** 0.5
+            if distance_m <= acceptance_m:
                 if reached_at is None:
                     reached_at = now
                     print(f"Reached setpoint N {north_m:+.1f} E {east_m:+.1f}"
                           + (f", holding {dwell_s:.1f} s" if dwell_s > 0 else ""))
                 if now - reached_at >= dwell_s:
                     return last_gps
+            elif now - last_progress >= PROGRESS_INTERVAL_S:
+                print(f"  {distance_m:5.2f} m to go")
+                last_progress = now
+    if distance_m is None:
+        raise TimeoutError(
+            f"No LOCAL_POSITION_NED within {timeout_s:.0f} s, so arrival at "
+            f"N {north_m:.1f} E {east_m:.1f} cannot be measured. Request the "
+            "stream with set_message_interval()."
+        )
     raise TimeoutError(
-        f"Did not reach N {north_m:.1f} E {east_m:.1f} within {timeout_s:.0f} s"
+        f"Did not reach N {north_m:.1f} E {east_m:.1f} within "
+        f"{timeout_s:.0f} s (closest {distance_m:.2f} m)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Ground station: takeoff, hover, land
+#
+# This half of the file is the ground station. It does not simulate the
+# aircraft and it does not run the flight controller: it speaks MAVLink to
+# ArduCopter SITL, which is already flying the Iris inside Gazebo.
+#
+# Start order, each in its own terminal (or scripts/run_sim.sh, which starts
+# the first two together and kills leftovers):
+#
+#     bash scripts/run_sim.sh
+#     python3 scripts/mavlink_link.py
+#
+# Outputs: a CSV at POSITION_RATE_HZ with one row per GLOBAL_POSITION_INT and
+# a phase column (climb / hover / land), and a summary JSON next to it with
+# the peak altitude, the phases that were actually flown and whether the
+# flight controller disarmed. scripts/test_task2.py asserts on both files;
+# nothing in this project trusts the terminal output. With --video the camera
+# is also recorded to an mp4 for the same flight, so the video evidence and
+# the position log describe one run rather than two.
+#
+# Change the flight by changing the constants below. Each comment says what
+# that number does to the aircraft.
+# ---------------------------------------------------------------------------
+
+# Metres above the point ArduCopter stored as home. This is not a GPS
+# altitude and it is not a Gazebo z coordinate. 5 becomes a 5 m climb; 10
+# becomes a 10 m climb. The climb stops when relative_alt reaches
+# (this value - ALTITUDE_TOLERANCE_M).
+TARGET_ALTITUDE_M = 5.0
+
+# How close to TARGET_ALTITUDE_M counts as "arrived", in metres. 0.5 means
+# a reading of 4.5 m is accepted for a 5 m target. Smaller waits longer and
+# can time out on barometer noise; larger reports success while the
+# aircraft is still climbing.
+ALTITUDE_TOLERANCE_M = 0.5
+
+# Seconds of flight-controller time to hold position after the climb. The
+# wait uses the autopilot clock (time_boot_ms), so a slow simulation still
+# hovers this long in simulated time. 0 skips the hover and starts the
+# landing as soon as the altitude check passes.
+HOVER_SECONDS = 8.0
+
+# How long each phase may take, in wall-clock seconds. Gazebo runs in
+# lockstep with SITL, so a busy CPU makes these expire before the simulated
+# clock has caught up. Increase them on a slow machine. They do not change
+# the path the aircraft flies.
+READY_TIMEOUT_S = 90.0
+CLIMB_TIMEOUT_S = 90.0
+LAND_TIMEOUT_S = 120.0
+
+# Position log rate in Hz. Raising it makes the CSV denser and costs CPU;
+# lowering it makes the altitude check coarser. EKF_STATUS_REPORT and
+# GPS_RAW_INT only need to be fast enough to notice readiness.
+POSITION_RATE_HZ = 10.0
+STATUS_RATE_HZ = 2.0
+
+
+def log_row(writer, msg, phase):
+    """Write one position sample.
+
+    Altitudes are stored in metres so the CSV can be plotted without
+    remembering the MAVLink millimetre convention. Velocities are MAVLink
+    cm/s, stored in m/s. The raw message is not modified.
+    """
+    writer.writerow({
+        "time_boot_ms": msg.time_boot_ms,
+        "phase": phase,
+        "lat_deg": msg.lat / 1e7,
+        "lon_deg": msg.lon / 1e7,
+        "relative_alt_m": msg.relative_alt / 1000.0,
+        "amsl_alt_m": msg.alt / 1000.0,
+        "vx_m_s": msg.vx / 100.0,
+        "vy_m_s": msg.vy / 100.0,
+        "vz_m_s": msg.vz / 100.0,
+    })
+
+
+def hover(master, writer, start_msg, hover_s):
+    """Hold for hover_s seconds of autopilot time.
+
+    GUIDED already holds the takeoff position; this function sends no new
+    setpoint. It waits on the autopilot clock, so the hover length is
+    independent of how fast the desktop renders. Changing HOVER_SECONDS
+    changes only this wait; it does not touch the hold gains.
+    """
+    if hover_s <= 0:
+        return
+    start_ms = start_msg.time_boot_ms
+    print(f"Hovering for {hover_s:.0f} s of autopilot time")
+    last_print = 0.0
+    while True:
+        msg = master.recv_match(type="GLOBAL_POSITION_INT", blocking=True,
+                                timeout=2)
+        if msg is None:
+            raise TimeoutError("Position stream stopped during hover")
+        log_row(writer, msg, "hover")
+        elapsed_s = (msg.time_boot_ms - start_ms) / 1000.0
+        now = time.time()
+        if now - last_print > 1.0:
+            print(
+                f"  hover  t={elapsed_s:.1f} s  "
+                f"relative_alt={msg.relative_alt / 1000.0:.2f} m"
+            )
+            last_print = now
+        if elapsed_s >= hover_s:
+            return
+
+
+def summarise_csv(csv_path, disarmed):
+    """Read the CSV back and write <csv>.summary.json.
+
+    Reading the file instead of tracking counters in the flight loop means
+    the summary cannot disagree with the evidence. The test asserts on this
+    file and on the CSV; there is no third source of truth.
+    """
+    phases = []
+    peak_alt = 0.0
+    final_alt = 0.0
+    samples = 0
+    duration_s = 0.0
+    first_ms = None
+    last_ms = None
+    with csv_path.open() as handle:
+        for row in csv.DictReader(handle):
+            samples += 1
+            phase = row["phase"]
+            if phase not in phases:
+                phases.append(phase)
+            alt = float(row["relative_alt_m"])
+            peak_alt = max(peak_alt, alt)
+            final_alt = alt
+            boot_ms = int(row["time_boot_ms"])
+            if first_ms is None:
+                first_ms = boot_ms
+            last_ms = boot_ms
+    if first_ms is not None and last_ms is not None:
+        duration_s = (last_ms - first_ms) / 1000.0
+    return {
+        "csv": display_path(csv_path),
+        "samples": samples,
+        "phases": phases,
+        "peak_relative_alt_m": round(peak_alt, 3),
+        "final_relative_alt_m": round(final_alt, 3),
+        "autopilot_duration_s": round(duration_s, 2),
+        "disarmed": bool(disarmed),
+    }
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Guided takeoff and landing")
+    # Command-line values override the constants. The constants stay the
+    # documented defaults, so the file itself shows the flight that was run.
+    parser.add_argument("--altitude", type=float, default=TARGET_ALTITUDE_M,
+                        help="Takeoff height above home, metres")
+    parser.add_argument("--hover", type=float, default=HOVER_SECONDS,
+                        help="Hover time, seconds of autopilot time")
+    parser.add_argument("--connect", default=CONNECTION,
+                        help="pymavlink connection string")
+    parser.add_argument("--log", default=None,
+                        help="CSV path. Default is logs/takeoff_land_<time>.csv")
+    parser.add_argument("--gimbal-pitch", type=float, default=None,
+                        help="Optional: point the gimbal camera down by this "
+                             "many radians through Gazebo transport (no ROS)")
+    parser.add_argument("--video", default=None,
+                        help="Optional: record the gimbal camera to this mp4 "
+                             "for the duration of the flight")
+    return parser.parse_args()
+
+
+def display_path(path):
+    """The path stored in a summary: repository-relative when it is inside.
+
+    Keeps the JSON readable, and still pointing at the right file, when the
+    project is cloned under a different directory.
+    """
+    resolved = Path(path).resolve()
+    try:
+        return str(resolved.relative_to(Path(__file__).resolve().parents[1]))
+    except ValueError:
+        return str(resolved)
+
+
+def main():
+    args = parse_args()
+    root = Path(__file__).resolve().parents[1]
+    log_dir = root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    if args.log is None:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        log_path = log_dir / f"takeoff_land_{stamp}.csv"
+    else:
+        log_path = Path(args.log)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if args.gimbal_pitch is not None:
+        # Imported lazily: the takeoff/landing test does not need Gazebo
+        # transport, and the module is only present with gz-sim installed.
+        import camera
+
+        camera.set_pitch(args.gimbal_pitch)
+
+    master = connect(args.connect)
+    request_telemetry(master, {
+        mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT: POSITION_RATE_HZ,
+        mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT: STATUS_RATE_HZ,
+        mavutil.mavlink.MAVLINK_MSG_ID_EXTENDED_SYS_STATE: STATUS_RATE_HZ,
+        mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT: STATUS_RATE_HZ,
+    })
+    wait_until_ready(master, READY_TIMEOUT_S)
+
+    # The video starts before the arm command, so it contains the takeoff
+    # from the first metre rather than starting mid-climb. Imported lazily
+    # for the same reason as the camera pitch above.
+    video = None
+    if args.video is not None:
+        import camera
+
+        video_path = Path(args.video)
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        video = camera.VideoRecorder(video_path)
+        print(f"Recording the camera to {video_path}")
+
+    started_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    disarmed = False
+    try:
+        with log_path.open("w", newline="", buffering=1) as handle:
+            # buffering=1 = line buffered: a crash still leaves every row that
+            # had been received, which is what makes a failed run diagnosable.
+            writer = csv.DictWriter(handle, fieldnames=[
+                "time_boot_ms", "phase", "lat_deg", "lon_deg",
+                "relative_alt_m", "amsl_alt_m", "vx_m_s", "vy_m_s", "vz_m_s",
+            ])
+            writer.writeheader()
+            # GUIDED before arm so the takeoff command is legal the moment the
+            # motors start. Arming in STABILIZE and then changing mode also
+            # works, but the aircraft can yaw on the ground in between.
+            set_mode(master, "GUIDED")
+            arm(master)
+            takeoff(master, args.altitude)
+            arrived = wait_for_altitude(
+                master, args.altitude, ALTITUDE_TOLERANCE_M,
+                CLIMB_TIMEOUT_S,
+                position_callback=lambda msg: log_row(writer, msg, "climb"),
+            )
+            hover(master, writer, arrived, args.hover)
+            land(
+                master, LAND_TIMEOUT_S,
+                position_callback=lambda msg: log_row(writer, msg, "land"),
+            )
+            disarmed = True
+    finally:
+        # Closed here rather than after the summary: a flight that raises
+        # still leaves a playable mp4 of whatever happened.
+        if video is not None:
+            video.close()
+
+    summary = summarise_csv(log_path, disarmed)
+    summary.update({
+        "started_utc": started_utc,
+        "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "connection": args.connect,
+        "target_altitude_m": args.altitude,
+        "target_altitude_tolerance_m": ALTITUDE_TOLERANCE_M,
+        "hover_seconds": args.hover,
+        "ok": True,
+    })
+    if video is not None:
+        # Recorded in the summary so the mp4 can be tied to this exact run:
+        # the frame count is what distinguishes a real recording from an
+        # empty file that happens to exist.
+        summary.update({
+            "video": display_path(args.video),
+            "video_frames": video.frames,
+        })
+    summary_path = log_path.with_suffix(".summary.json")
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+
+    print(f"Position log written to {log_path}")
+    print(f"Summary written to {summary_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+

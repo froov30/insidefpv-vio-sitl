@@ -26,7 +26,6 @@ Output layout
                                      autopilot time at capture
         imu.csv                      RAW_IMU and SCALED_IMU2
         attitude.csv                 ATTITUDE
-        global_position.csv          GLOBAL_POSITION_INT
         local_position.csv           LOCAL_POSITION_NED
         gps_raw.csv                  GPS_RAW_INT
         dataset.json                 intrinsics, rates, clock offset, counts
@@ -63,7 +62,6 @@ from gz.msgs10.image_pb2 import Image
 from pymavlink import mavutil
 
 import camera
-import gimbal
 import mavlink_link
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,7 +72,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 # The topic names and the RGB_INT8 -> BGR decoding live in scripts/camera.py,
-# because takeoff_land.py --video uses the same ones. A typo in a topic name
+# because mavlink_link.py --video uses the same ones. A typo in a topic name
 # does not raise: subscribe() succeeds and simply never calls back.
 IMAGE_TOPIC = camera.IMAGE_TOPIC
 INFO_TOPIC = camera.INFO_TOPIC
@@ -132,9 +130,9 @@ READY_TIMEOUT_S = 90.0
 CLIMB_TIMEOUT_S = 90.0
 LAND_TIMEOUT_S = 120.0
 
-# Gimbal pitch used for the whole dataset. See scripts/gimbal.py for why the
+# Camera pitch used for the whole dataset. See scripts/camera.py for why the
 # camera is pointed down: at level, most of the frame is sky.
-GIMBAL_PITCH_RAD = gimbal.PITCH_DOWN_RAD
+GIMBAL_PITCH_RAD = camera.PITCH_DOWN_RAD
 
 # MAVLink stream rates, for the logging link. The camera runs at 10 Hz;
 # 50 Hz IMU gives five samples per frame and 20 Hz attitude gives two, which
@@ -142,9 +140,9 @@ GIMBAL_PITCH_RAD = gimbal.PITCH_DOWN_RAD
 # interpolating a single sample. 10 Hz position is the rate the flight
 # controller estimates at.
 #
-# These are rates in autopilot time. The simulation runs well below real
-# time on this machine (real_time_factor in dataset.json), so a 40 s
-# recording of wall-clock time covers far less simulated flight.
+# These are rates in autopilot time. The simulation can run well below real
+# time (real_time_factor in dataset.json records the factor achieved), so 40 s
+# of wall-clock recording can cover far less simulated flight.
 STREAM_RATES = {
     mavutil.mavlink.MAVLINK_MSG_ID_RAW_IMU: 50.0,
     mavutil.mavlink.MAVLINK_MSG_ID_SCALED_IMU2: 50.0,
@@ -156,10 +154,21 @@ STREAM_RATES = {
 }
 
 # The flight-command link needs far less: a heartbeat, a position to aim the
-# takeoff at, and the GPS/EKF state that wait_until_ready() polls. Asking
-# for the 50 Hz streams here as well would only add traffic.
+# takeoff at, the local position goto_local_ned() measures arrival against,
+# and the GPS/EKF state that wait_until_ready() polls. Asking for the 50 Hz
+# streams here as well would only add traffic.
+#
+# LOCAL_POSITION_NED is requested explicitly and that is not optional. This
+# SITL does not stream it on SERIAL0 unless asked (SR0_POSITION is 0), and a
+# missing stream is indistinguishable from "not there yet" inside
+# goto_local_ned(): the setpoint keeps being re-sent while the arrival test
+# waits for a message that will never arrive. The aircraft reaches the first
+# corner, holds there for LEG_TIMEOUT_S, and the square silently becomes a
+# hover. Requesting it here is what makes the square conditional on nothing
+# but the code.
 COMMAND_RATES = {
     mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT: 10.0,
+    mavutil.mavlink.MAVLINK_MSG_ID_LOCAL_POSITION_NED: 10.0,
     mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT: 2.0,
     mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT: 2.0,
 }
@@ -327,10 +336,9 @@ def read_intrinsics(timeout_s=FIRST_MESSAGE_TIMEOUT_S):
         distortion.k = [k1, k2, p1, p2, k3]              model 0 = none
         projection.p = 3x4 matrix for a rectified camera
 
-    The first version of this function asked for intrinsics.fx and raised
-    AttributeError; the sensor advertises no distortion at all, which is
-    why the distortion values are all zero and the VIO can treat the
-    camera as a pinhole with no undistortion step.
+    There is no intrinsics.fx field; the focal lengths live in k. The sensor
+    advertises no distortion model, which is why every coefficient is zero
+    and the VIO can treat the camera as a pinhole with no undistortion step.
     """
     holder = {}
     event = threading.Event()
@@ -398,11 +406,6 @@ def make_loggers(log_dir):
             "wall_time_s", "time_boot_ms", "roll_rad", "pitch_rad",
             "yaw_rad", "roll_rate_rad_s", "pitch_rate_rad_s", "yaw_rate_rad_s",
         ]),
-        "global_position": CsvWriter(log_dir / "global_position.csv", [
-            "wall_time_s", "time_boot_ms", "lat_deg", "lon_deg",
-            "alt_m", "relative_alt_m", "vx_m_s", "vy_m_s", "vz_m_s",
-            "heading_cdeg",
-        ]),
         "local_position": CsvWriter(log_dir / "local_position.csv", [
             "wall_time_s", "time_boot_ms", "north_m", "east_m", "down_m",
             "vn_m_s", "ve_m_s", "vd_m_s",
@@ -415,22 +418,16 @@ def make_loggers(log_dir):
     return loggers
 
 
-def unit_note():
-    """Units used by every conversion in log_message(), in one place.
-
-    MAVLink is not in SI. Getting a factor of 1000 wrong here would make the
-    VIO report a wrong scale and the comparison meaningless, so each
-    conversion is stated next to the field:
-        accelerometer  mG    (1 g = 1000)   -> m/s^2  * 9.80665 / 1000
-        gyroscope      mrad/s               -> rad/s  / 1000
-        altitude       mm                   -> m      / 1000
-        velocity       cm/s                 -> m/s    / 100
-        latitude/lon   deg * 1e7            -> deg    / 1e7
-
-    Kept as a docstring-only function so the table lives next to the code
-    it describes; unit_note() itself returns nothing.
-    """
-    return None
+# Units used by every conversion in log_message(), in one place.
+#
+# MAVLink is not in SI. Getting a factor of 1000 wrong here would make the VIO
+# report a wrong scale and the comparison meaningless, so each conversion is
+# stated next to the field that uses it:
+#     accelerometer   mG     (1 g = 1000)  -> m/s^2  * 9.80665 / 1000
+#     gyroscope       mrad/s               -> rad/s   / 1000
+#     altitude        mm                   -> m       / 1000
+#     velocity        cm/s                 -> m/s     / 100
+#     latitude/long   deg * 1e7            -> deg     / 1e7
 
 
 # MAVLink RAW_IMU reports acceleration in milli-g, not m/s^2. This is the
@@ -452,13 +449,13 @@ def log_message(message, loggers, wall_origin, clock):
         # Same three axes, different timestamp field: RAW_IMU carries
         # time_usec (microseconds since boot), SCALED_IMU2 carries
         # time_boot_ms (milliseconds). Reading time_usec from a SCALED_IMU2
-        # raised AttributeError on the first recording attempt.
+        # raises AttributeError, so the two fields are not interchangeable.
         #
-        # SITL reports 0 for the RAW_IMU timestamp on this build. When it
-        # does, the time base is genuinely unknown for that row, so the
-        # column is left empty instead of being filled with a guess;
-        # vio.py then maps wall_time_s onto the autopilot clock using
-        # attitude.csv, which carries both columns at 20 Hz.
+        # SITL can send a zero timestamp. When it does, the time base of that
+        # row is genuinely unknown, so the column is left empty instead of
+        # being filled with a guess; load_dataset() in vio.py then drops the
+        # row, which shortens the gyro window by one sample. The committed
+        # dataset has no such rows (2180 RAW_IMU samples, all timestamped).
         if kind == "RAW_IMU":
             raw_time_usec = message.time_usec
             boot_s = f"{raw_time_usec / 1e6:.6f}" if raw_time_usec else ""
@@ -492,21 +489,6 @@ def log_message(message, loggers, wall_origin, clock):
             "roll_rate_rad_s": f"{message.rollspeed:.6f}",
             "pitch_rate_rad_s": f"{message.pitchspeed:.6f}",
             "yaw_rate_rad_s": f"{message.yawspeed:.6f}",
-        })
-        return True
-    if kind == "GLOBAL_POSITION_INT":
-        clock.update(message.time_boot_ms)
-        loggers["global_position"].write({
-            "wall_time_s": wall_s,
-            "time_boot_ms": message.time_boot_ms,
-            "lat_deg": f"{message.lat / 1e7:.9f}",
-            "lon_deg": f"{message.lon / 1e7:.9f}",
-            "alt_m": f"{message.alt / 1000.0:.3f}",
-            "relative_alt_m": f"{message.relative_alt / 1000.0:.3f}",
-            "vx_m_s": f"{message.vx / 100.0:.3f}",
-            "vy_m_s": f"{message.vy / 100.0:.3f}",
-            "vz_m_s": f"{message.vz / 100.0:.3f}",
-            "heading_cdeg": message.hdg,
         })
         return True
     if kind == "LOCAL_POSITION_NED":
@@ -546,9 +528,9 @@ class MavlinkLogger(threading.Thread):
     recv_match(type=...) discards every message it reads that is not of the
     requested type, so a command waiting five seconds for a
     GLOBAL_POSITION_INT throws away every IMU and attitude sample that
-    arrives meanwhile. The first attempt at this dataset used one link for
-    everything and recorded the IMU at 4.8 Hz instead of 50 Hz, which would
-    have left the VIO with one gyro sample every two frames.
+    arrives meanwhile. Sharing one link for everything therefore records the
+    IMU at 4.8 Hz instead of 50 Hz, which leaves the VIO with one gyro sample
+    every other frame.
 
     This thread owns its link and never lets a sample go unread.
     """
@@ -707,7 +689,7 @@ def main():
     # Point the camera down before the first frame is recorded, so the whole
     # dataset shares one camera orientation. The gimbal holds the target
     # angle: it does not drift back to level.
-    gimbal.set_pitch(GIMBAL_PITCH_RAD)
+    camera.set_pitch(GIMBAL_PITCH_RAD)
 
     master = mavlink_link.connect(args.connect)
     # The command link only carries what the commands need to read.
@@ -818,7 +800,6 @@ def main():
                 "imu_acceleration": "m/s^2",
                 "imu_gyro": "rad/s",
                 "attitude": "rad",
-                "global_position": "deg, m",
                 "local_position": "m, m/s",
                 "time": "seconds on each message's own clock",
             },

@@ -1,2 +1,0 @@
-Connecting to tcp:127.0.0.1:5760
-ERROR: No heartbeat. SITL is not running, or something else is already connected to TCP port 5760.

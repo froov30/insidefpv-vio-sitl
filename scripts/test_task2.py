@@ -3,17 +3,20 @@
 
 This is the test the brief asks for: no GUI, no human watching a video. It
 starts a fresh Gazebo server (gz sim -s, headless, camera still rendered),
-starts a fresh ArduCopter SITL, flies takeoff_land.py once, and then asserts
+starts a fresh ArduCopter SITL, flies the ground station once, and then asserts
 on the files that flight produced.
 
 What is asserted, and against which file
-    1. The flight script exited 0                          terminal.log
-    2. The CSV has >= MIN_SAMPLES rows                     flight.csv
-    3. Phases climb, hover, land appear, in that order      flight.csv
-    4. Peak relative_alt is inside [4.5, 5.5] m            flight.csv
-    5. The final relative_alt is below LANDED_MAX_ALT_M    flight.csv
-    6. The autopilot disarmed at the end                   summary + heartbeat log
-    7. A DataFlash .BIN was written and is non-empty       logs/sitl/logs
+    1.  The ground station exited 0                        terminal.log
+    2.  flight.csv is readable and not empty               flight.csv
+    3.  The CSV has >= MIN_SAMPLES rows                    flight.csv
+    4.  Phases climb, hover, land appear, in that order    flight.csv
+    5.  Peak relative_alt is inside [4.5, 5.5] m           flight.csv
+    6.  The final relative_alt is below LANDED_MAX_ALT_M   flight.csv
+    7.  The flight duration is positive                    flight.csv
+    8.  The summary JSON agrees with the CSV               flight.summary.json
+    9.  The autopilot disarmed at the end                  summary + heartbeat log
+    10. A DataFlash .BIN was written and is non-empty      logs/sitl/logs
 
 Every check reads the CSV itself rather than trusting the summary JSON, and
 then cross-checks the summary against the CSV. Two independent readings of
@@ -48,7 +51,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The flight the test demands. These are the brief's numbers, not the
 # script's defaults: takeoff to 5 m, accept +-0.5 m, and require the
 # aircraft to be back on the ground at the end. A change to
-# takeoff_land.py's TARGET_ALTITUDE_M that is not reflected here makes the
+# the ground station's TARGET_ALTITUDE_M that is not reflected here makes the
 # test fail, which is the intended behaviour.
 EXPECTED_ALTITUDE_M = 5.0
 ALTITUDE_TOLERANCE_M = 0.5
@@ -95,10 +98,12 @@ def shell(script, *args, timeout=None):
 def stop_pair():
     """Kill any leftover Gazebo/SITL pair.
 
-    This is not optional hygiene: SITL's SERIAL0 accepts one client ever
-    (see scripts/run_sitl.sh), so a survivor from an earlier attempt makes
-    the next run fail with "No heartbeat" for a reason that has nothing to
-    do with the code under test.
+    This is not optional hygiene: a leftover SITL owns TCP 5760, so the
+    pair this run starts cannot bind it, and the old process would answer
+    the test's client with state from an earlier attempt (see
+    scripts/run_sitl.sh). Without this, the next run fails with "No
+    heartbeat" for a reason that has nothing to do with the code under
+    test.
     """
     shell("stop_sim.sh")
 
@@ -281,7 +286,7 @@ def run_once(index, results_root):
     print("Simulation is ready; flying")
     try:
         flight_result = subprocess.run(
-            [sys.executable, "scripts/takeoff_land.py",
+            [sys.executable, "scripts/mavlink_link.py",
              "--log", str(run_dir / "flight.csv")],
             cwd=ROOT,
             text=True,
@@ -291,7 +296,7 @@ def run_once(index, results_root):
     except subprocess.TimeoutExpired as error:
         # A hung flight is still evidence: keep whatever it printed.
         (run_dir / "terminal.log").write_text(
-            f"takeoff_land.py timed out after {FLIGHT_TIMEOUT_S} s\n"
+            f"the ground station timed out after {FLIGHT_TIMEOUT_S} s\n"
             f"stdout:\n{error.stdout}\nstderr:\n{error.stderr}\n"
         )
         terminate(pair)

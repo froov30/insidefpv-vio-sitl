@@ -1,20 +1,20 @@
 {
-  "dataset": "/home/dhruv/insideFPV_task/results/task3/dataset_20261120_012619",
-  "trajectory": "/home/dhruv/insideFPV_task/results/task3/vio_trajectory.csv",
-  "frames": 472,
-  "frames_without_step": 2,
-  "inliers_mean": 74.4,
-  "inliers_min": 11,
-  "rotation_disagreement_deg_median": 0.276,
-  "essential_direction_disagreement_deg_median": 33.558,
+  "dataset": "results/task3/dataset_20261120_212116",
+  "trajectory": "results/task3/vio_trajectory.csv",
+  "frames": 435,
+  "frames_without_step": 15,
+  "inliers_mean": 69.4,
+  "inliers_min": 9,
+  "rotation_disagreement_deg_median": 0.422,
+  "essential_direction_disagreement_deg_median": 44.427,
   "rotation_source_counts": {
-    "gyro": 471,
-    "none": 1
+    "gyro": 430,
+    "none": 5
   },
   "metric_scale": {
     "method": "per-frame camera height above the ground plane",
     "height_min_m": 0.19,
     "height_max_m": 5.27
   },
-  "path_length_m": 47.137
+  "path_length_m": 54.879
 }

@@ -28,8 +28,8 @@ Method, step by step
     the reason is under "Why not the essential matrix" below.
 
 Why not the essential matrix
-    It was tried first, on this same dataset, and two failure modes were
-    measured rather than assumed.
+    Both failure modes below come from measurements on the recording this
+    project ships, not from assumption.
 
     * At low image motion (hover, the corners of the square) a 1-3 pixel
       flow is noise, and the recovered direction is noise with it: 50-175
@@ -71,7 +71,13 @@ What is never used for the pose
 
 Usage
     python3 scripts/vio.py                       # newest dataset directory
-    python3 scripts/vio.py --dataset results/task3/dataset_20261120_012619
+    python3 scripts/vio.py --dataset results/task3/dataset_<stamp>
+
+    The camera frames are not part of the repository, so the dataset named
+    here has to be one that was recorded locally; the logs in results/task3/
+    and the trajectory they produced are committed, the PNGs are not.
+    scripts/run_task3_record.sh writes a fresh dataset in about a minute, and
+    this script then runs on it without arguments.
 """
 
 import argparse
@@ -85,6 +91,19 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def display_path(path):
+    """The path as written into the JSON summary.
+
+    Relative to the repository whenever the file is inside it, so the summary
+    stays readable - and correct - when the project is cloned somewhere else.
+    """
+    path = Path(path).resolve()
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
 
 
 # ---------------------------------------------------------------------------
@@ -190,16 +209,24 @@ def read_csv(path):
 
 
 def newest_dataset(task3_dir):
-    """Return the most recently written dataset directory."""
+    """Return the most recently written *complete* dataset directory.
+
+    Complete means dataset.json is present. It is written last, after the
+    flight, so a recording that was interrupted has no dataset.json. Such a
+    run still leaves a directory behind - PNG frames are written as they
+    arrive - and by name it can sort after the last good dataset, which
+    would make every later stage fail on a dataset that holds no telemetry.
+    """
     candidates = sorted(
-        (p for p in task3_dir.glob("dataset_*") if p.is_dir()),
+        (p for p in task3_dir.glob("dataset_*")
+         if p.is_dir() and (p / "dataset.json").is_file()),
         key=lambda p: p.name,
     )
     if not candidates:
         raise SystemExit(
-            f"No dataset_* directory in {task3_dir}. Record one first: "
-            "bash scripts/run_sim.sh --headless, then "
-            "python3 scripts/record_dataset.py"
+            f"No complete dataset_* directory in {task3_dir}. Record one "
+            "first: ./scripts/run_gazebo.sh --headless, "
+            "./scripts/run_sitl.sh, then ./scripts/run_task3_record.sh"
         )
     return candidates[-1]
 
@@ -375,14 +402,14 @@ def plane_translation(points_previous, points_next, camera_matrix, r_camera,
     as x2 x (R x1 + u (n . x1)) = 0 with u = t/d gives a 3-column least
     squares problem, which is what this function solves.
 
-    Why not the essential matrix for this. It was tried first, on these
-    same images. Two problems were measured: at low image motion (hover,
-    corners) the translation direction is noise, and with the motion nearly
-    coplanar to the view the essential matrix has a two-fold ambiguity that
-    cheirality does not resolve - measured as a constant large angle error
-    on frames with 30+ pixels of flow. Fixing R from the gyro removes the
-    ambiguity, because the rotation no longer competes with the translation
-    for the same image motion.
+    Why not the essential matrix for this. On these images it fails in two
+    ways: at low image motion (hover, corners) the translation direction is
+    noise, and with the motion nearly coplanar to the view the essential
+    matrix has a two-fold ambiguity that cheirality does not resolve - it
+    appears as a consistently large angular error on frames with 30+ pixels
+    of flow. Fixing R from the gyro removes the ambiguity, because the
+    rotation no longer competes with the translation for the same image
+    motion.
 
     Returns (u, inliers): the metric translation per metre of height, and
     the number of correspondences the plane model kept. The camera's
@@ -491,6 +518,25 @@ def run_vio(dataset, intrinsics, dataset_dir):
 
     times, omega = gyro_intervals(dataset["imu"])
     frames = dataset["frames"]
+    # Camera frames are the one part of a dataset that is not committed: at
+    # 640x480 PNG they are ~27 MB per recording. Checking here rather than at
+    # the first cv2.imread turns a missing directory into one message that
+    # says how to produce it, instead of an exception in the middle of a run.
+    missing = [frame["file"] for frame in frames
+               if not (dataset_dir / frame["file"]).is_file()]
+    if missing:
+        raise SystemExit(
+            f"This dataset has no camera frames on disk: {len(missing)} of "
+            f"{len(frames)} are missing, starting with\n"
+            f"  {dataset_dir / missing[0]}\n\n"
+            "Frames are not stored in the repository. Record a dataset "
+            "first, then run this again:\n"
+            "  ./scripts/run_gazebo.sh           # terminal 1\n"
+            "  ./scripts/run_sitl.sh             # terminal 2\n"
+            "  ./scripts/run_task3_record.sh     # terminal 3\n\n"
+            "results/task3/vio_trajectory.csv is what this script produced "
+            "from the recording that is described in README.md."
+        )
     attitude = dataset["attitude"]
     local = dataset["local"]
     attitude_times = [float(row["time_boot_ms"]) / 1000.0 for row in attitude]
@@ -644,8 +690,8 @@ def write_outputs(dataset_dir, records, output_path):
         if record["essential_disagreement_deg"] != ""
     ]
     summary = {
-        "dataset": str(dataset_dir),
-        "trajectory": str(output_path),
+        "dataset": display_path(dataset_dir),
+        "trajectory": display_path(output_path),
         "frames": len(records),
         "frames_without_step": sum(1 for record in records
                                     if record["step_m"] == 0.0),

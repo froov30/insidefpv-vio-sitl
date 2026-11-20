@@ -1,5 +1,0 @@
-insideFPV_task environment loaded
-  GZ_VERSION=harmonic
-  plugin path=/home/dhruv/insideFPV_task/third_party/ardupilot_gazebo/build
-  ardupilot=/home/dhruv/insideFPV_task/third_party/ardupilot
-RiTW: Starting ArduCopter : /home/dhruv/insideFPV_task/third_party/ardupilot/build/sitl/bin/arducopter --model JSON --speedup 1 --slave 0 --defaults /home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/copter.parm,/home/dhruv/insideFPV_task/third_party/ardupilot/Tools/autotest/default_params/gazebo-iris.parm --sim-address=127.0.0.1 -I0
