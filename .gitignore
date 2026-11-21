@@ -14,11 +14,6 @@ __pycache__/
 logs/sitl/
 logs/sim/
 
-# Editor and agent configuration, not part of the deliverable.
-.vscode/
-.cursor/
-.claude/
-
 # Working documentation. These are kept on disk and used while recording the
 # walkthrough, but they are not part of the repository: README.md is the file a
 # reviewer starts from, and everything they need to run the project is in
